@@ -145,6 +145,25 @@
   .sched-add{ margin-top:10px; background:none; border:1.4px dashed var(--line); border-radius:8px; padding:8px 12px; font-size:13px; color:var(--muted); cursor:pointer; width:100%; text-align:center; }
   .sched-add:hover{ background:var(--paper); }
 
+  .month-nav{ display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:14px; }
+  .month-btn{ background:none; border:1.4px solid var(--line); border-radius:6px; width:28px; height:28px; font-size:15px; color:var(--muted); cursor:pointer; }
+  .month-btn:hover{ background:var(--paper); }
+  .month-label{ font-family:'Fraunces',serif; font-size:15px; font-weight:600; min-width:150px; text-align:center; }
+
+  .cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:16px; }
+  .cal-dow{ font-size:10px; text-align:center; color:var(--muted); padding-bottom:2px; }
+  .cal-cell{ aspect-ratio:1; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:10.5px; color:var(--ink); background:var(--paper); border:1px solid var(--line); }
+  .cal-cell.empty{ visibility:hidden; }
+  .cal-cell.today{ box-shadow:0 0 0 1.5px var(--rose-margin) inset; font-weight:700; }
+
+  .review-stats{ display:flex; flex-direction:column; gap:10px; }
+  .rs-row{ font-size:13.5px; }
+  .rs-row .rs-top{ display:flex; justify-content:space-between; margin-bottom:3px; }
+  .rs-row .rs-top span:last-child{ color:var(--muted); }
+  .rs-simple{ font-size:13.5px; display:flex; justify-content:space-between; padding:5px 0; border-top:1px dashed var(--line); }
+  .rs-simple:first-child{ border-top:none; }
+  .rs-simple b{ font-weight:600; }
+
   .foot-note{ text-align:center; font-size:12px; color:var(--muted); margin-top:22px; }
 
   @media (max-width:520px){
@@ -235,6 +254,17 @@
         <div class="reward-msg" id="rewardMsg">—</div>
         <button class="reward-btn" id="rewardBtn">Tandai sudah nonton</button>
       </div>
+    </div>
+
+    <div class="card" style="--accent:var(--teal)">
+      <div class="card-head"><h2>Review Bulanan</h2><span class="sub" id="reviewOverallPct">0%</span></div>
+      <div class="month-nav">
+        <button class="month-btn" id="monthPrev">‹</button>
+        <div class="month-label" id="monthLabel">—</div>
+        <button class="month-btn" id="monthNext">›</button>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+      <div class="review-stats" id="reviewStats"></div>
     </div>
 
     <div class="foot-note">Data tersimpan otomatis di browser ini saja.</div>
@@ -328,7 +358,9 @@
     return {
       entries:{},
       tutorDone:[false,false,false,false,false,false,false],
+      tutorDoneDate:[null,null,null,null,null,null,null],
       doaDone:new Array(14).fill(false),
+      doaDoneDate:new Array(14).fill(null),
       rewardWeeks:{},
       schedule: schedule
     };
@@ -341,7 +373,9 @@
       var d = defaultState();
       parsed.entries = parsed.entries || {};
       parsed.tutorDone = parsed.tutorDone || d.tutorDone;
+      parsed.tutorDoneDate = parsed.tutorDoneDate || d.tutorDoneDate;
       parsed.doaDone = parsed.doaDone || d.doaDone;
+      parsed.doaDoneDate = parsed.doaDoneDate || d.doaDoneDate;
       parsed.rewardWeeks = parsed.rewardWeeks || {};
       parsed.schedule = parsed.schedule || d.schedule;
       for(var i=0;i<7;i++){ if(!parsed.schedule[i]) parsed.schedule[i] = DEFAULT_SCHEDULE(); }
@@ -356,6 +390,7 @@
   var weekStart = mondayOf(today);
   var weekStartISO = isoDate(weekStart);
   var selectedDate = new Date(today);
+  var viewedMonth = { y: today.getFullYear(), m: today.getMonth() };
 
   function dayEntry(iso){ if(!state.entries[iso]) state.entries[iso] = {}; return state.entries[iso]; }
 
@@ -506,6 +541,7 @@
       reset.textContent = 'Mulai ulang dari awal';
       reset.addEventListener('click', function(){
         state.tutorDone = state.tutorDone.map(function(){ return false; });
+        state.tutorDoneDate = state.tutorDoneDate.map(function(){ return null; });
         saveState(); renderAll();
       });
       body.appendChild(reset);
@@ -524,6 +560,7 @@
     body.appendChild(note);
     body.appendChild(makeItemRow('Sudah selesai dikerjakan', false, function(){
       state.tutorDone[activeIdx] = true;
+      state.tutorDoneDate[activeIdx] = todayISO;
       saveState(); renderAll();
     }));
     var bar = document.createElement('div');
@@ -549,6 +586,7 @@
       reset.textContent = 'Mulai ulang dari awal';
       reset.addEventListener('click', function(){
         state.doaDone = state.doaDone.map(function(){ return false; });
+        state.doaDoneDate = state.doaDoneDate.map(function(){ return null; });
         saveState(); renderAll();
       });
       body.appendChild(reset);
@@ -565,6 +603,7 @@
       body.appendChild(titleEl);
       body.appendChild(makeItemRow('Sudah dipelajari', false, function(){
         state.doaDone[activeIdx] = true;
+        state.doaDoneDate[activeIdx] = todayISO;
         saveState(); renderAll();
       }));
     } else {
@@ -718,6 +757,139 @@
     btn.onclick = function(){ state.rewardWeeks[weekStartISO] = !watched; saveState(); renderAll(); };
   }
 
+  var CATEGORY_DEFS = [
+    {label:'Akhirat', ids:['f1','f2','f3']},
+    {label:'Kesehatan', ids:['yoga']},
+    {label:'CPNS', ids:['c1','c2','c3']},
+    {label:'Bahasa Inggris', ids:['eng','engVideo','engDuo']},
+    {label:'Menulis', ids:['write']}
+  ];
+
+  function renderReview(){
+    var y = viewedMonth.y, m = viewedMonth.m;
+    var daysInMonth = new Date(y, m+1, 0).getDate();
+    var firstDow = monIdx(new Date(y, m, 1)); // 0=Mon
+
+    document.getElementById('monthLabel').textContent =
+      new Date(y, m, 1).toLocaleDateString('id-ID', {month:'long', year:'numeric'});
+
+    // overall + per-day fractions
+    var totalPossible = 0, totalChecked = 0;
+    var dayFracs = [];
+    var catTotals = CATEGORY_DEFS.map(function(){ return {checked:0, possible:0}; });
+    var productiveDays = 0, longestStreak = 0, curRun = 0, bestDay = null;
+
+    for(var day=1; day<=daysInMonth; day++){
+      var d = new Date(y, m, day);
+      var iso = isoDate(d);
+      var entry = state.entries[iso] || {};
+      var frac = dayCompletionFraction(iso);
+      dayFracs.push(frac);
+      totalPossible += CORE_IDS.length;
+      var dayChecked = 0;
+      CORE_IDS.forEach(function(id){ if(entry[id]) dayChecked++; });
+      totalChecked += dayChecked;
+
+      CATEGORY_DEFS.forEach(function(cat, ci){
+        cat.ids.forEach(function(id){
+          catTotals[ci].possible++;
+          if(entry[id]) catTotals[ci].checked++;
+        });
+      });
+
+      if(frac >= (5/7)){ productiveDays++; curRun++; if(curRun>longestStreak) longestStreak=curRun; }
+      else { curRun = 0; }
+
+      if(!bestDay || frac > bestDay.frac){ bestDay = {day:day, frac:frac}; }
+    }
+
+    var overallPct = totalPossible ? Math.round(totalChecked/totalPossible*100) : 0;
+    document.getElementById('reviewOverallPct').textContent = overallPct+'%';
+
+    // calendar grid
+    var grid = document.getElementById('calGrid');
+    grid.innerHTML = '';
+    DAY_NAMES_SHORT.forEach(function(lb){
+      var h = document.createElement('div');
+      h.className = 'cal-dow'; h.textContent = lb;
+      grid.appendChild(h);
+    });
+    for(var e=0;e<firstDow;e++){
+      var empty = document.createElement('div');
+      empty.className = 'cal-cell empty';
+      grid.appendChild(empty);
+    }
+    for(var day2=1; day2<=daysInMonth; day2++){
+      var cell = document.createElement('div');
+      var frac2 = dayFracs[day2-1];
+      var iso2 = isoDate(new Date(y,m,day2));
+      cell.className = 'cal-cell' + (iso2===todayISO ? ' today' : '');
+      cell.style.background = frac2 <= 0 ? 'var(--paper)' :
+        'color-mix(in srgb, var(--teal) ' + Math.round(frac2*85+15) + '%, var(--paper))';
+      cell.style.color = frac2 > 0.55 ? '#fff' : 'var(--ink)';
+      cell.textContent = day2;
+      grid.appendChild(cell);
+    }
+
+    // tutor / doa / reward within month
+    var tutorCount = state.tutorDoneDate.filter(function(dt){
+      return dt && dt.slice(0,7) === (y+'-'+pad(m+1));
+    }).length;
+    var doaCount = state.doaDoneDate.filter(function(dt){
+      return dt && dt.slice(0,7) === (y+'-'+pad(m+1));
+    }).length;
+    var rewardCount = Object.keys(state.rewardWeeks).filter(function(wk){
+      if(!state.rewardWeeks[wk]) return false;
+      var wd = new Date(wk);
+      return wd.getFullYear()===y && wd.getMonth()===m;
+    }).length;
+
+    var stats = document.getElementById('reviewStats');
+    stats.innerHTML = '';
+
+    CATEGORY_DEFS.forEach(function(cat, ci){
+      var pct = catTotals[ci].possible ? Math.round(catTotals[ci].checked/catTotals[ci].possible*100) : 0;
+      var row = document.createElement('div');
+      row.className = 'rs-row';
+      var top = document.createElement('div');
+      top.className = 'rs-top';
+      top.innerHTML = '<span>'+cat.label+'</span><span>'+pct+'%</span>';
+      var bar = document.createElement('div');
+      bar.className = 'bar';
+      var i = document.createElement('i');
+      i.style.width = pct+'%';
+      bar.appendChild(i);
+      row.appendChild(top); row.appendChild(bar);
+      stats.appendChild(row);
+    });
+
+    var simples = [
+      ['Hari produktif (≥5/7 checklist)', productiveDays + ' / ' + daysInMonth + ' hari'],
+      ['Streak terpanjang bulan ini', longestStreak + ' hari'],
+      ['Hari terbaik', bestDay ? (bestDay.day + ' (' + Math.round(bestDay.frac*100) + '%)') : '—'],
+      ['Modul Teman Tutor selesai', tutorCount + ' modul'],
+      ['Doa bacaan sholat dipelajari', doaCount + ' doa'],
+      ['Reward Hiburan tercapai', rewardCount + ' minggu']
+    ];
+    simples.forEach(function(pair){
+      var row = document.createElement('div');
+      row.className = 'rs-simple';
+      row.innerHTML = '<span>'+pair[0]+'</span><b>'+pair[1]+'</b>';
+      stats.appendChild(row);
+    });
+  }
+
+  function bindMonthNav(){
+    document.getElementById('monthPrev').addEventListener('click', function(){
+      viewedMonth.m--; if(viewedMonth.m<0){ viewedMonth.m=11; viewedMonth.y--; }
+      renderReview();
+    });
+    document.getElementById('monthNext').addEventListener('click', function(){
+      viewedMonth.m++; if(viewedMonth.m>11){ viewedMonth.m=0; viewedMonth.y++; }
+      renderReview();
+    });
+  }
+
   function renderHeader(){
     var opts = { weekday:'long', day:'numeric', month:'long', year:'numeric' };
     document.getElementById('todayDate').textContent = today.toLocaleDateString('id-ID', opts);
@@ -738,10 +910,12 @@
     renderRing();
     renderStreak();
     renderReward();
+    renderReview();
   }
 
   renderHeader();
   bindScheduleAdd();
+  bindMonthNav();
   renderAll();
 })();
 </script>
